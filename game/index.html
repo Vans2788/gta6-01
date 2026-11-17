@@ -1,21 +1,20 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Solara City — an original top-down open-world crime game: drive, steal cars, outrun the police and run jobs across a sun-soaked coastal city.">
-<title>Solara City — Open World</title>
+<link rel="icon" href="data:,">
+<title>Solara City — an open-world crime game</title>
 <style>
-  /* Full-bleed canvas, no scrollbars, dark letterbox behind the game. */
-  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b0e1a; }
-  #wrap { position: fixed; inset: 0; }
-  canvas { display: block; width: 100vw; height: 100vh; }
-  #status { position: fixed; left: 8px; bottom: 6px; color: #8a93b8; font: 11px/1.4 system-ui, sans-serif; opacity: .7; pointer-events: none; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f16; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  /* Read aloud, never shown: the status line screen readers announce. */
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="game" width="1280" height="800"></canvas></div>
-<div id="status"></div>
+<canvas id="game" aria-label="Solara City: an open-world crime game. Steal cars, outrun the police, run six story missions."></canvas>
+<p id="status" role="status" aria-live="polite"></p>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -1,20 +1,9 @@
-// Solara City, a gta6-01 entry (Node 22, standard library only): the game is
-// this directory's game/ folder, plain static files a desktop browser loads
-// offline (game/index.html and its ES modules, no library and no network
-// request), and this program hands it in. It copies game/ and screenshots/
-// from beside this file to /output and writes /output/dossier.json, the summary
-// the judge reads, with the vendored make.fun library. The game itself is an
-// original top-down open-world crime game: Jay Cruz drives, steals cars and
-// runs jobs for fixer Marta Reyes across Solara City, a 12x12 road grid with
-// traffic, pedestrians, a wanted level and police interceptors, six story
-// missions, taxi fares, hidden cash stashes, combat, a HUD with a live minimap,
-// a title screen and a localStorage save — all drawn on one canvas, all sound
-// synthesized in the browser, nothing borrowed from any commercial game.
-//
-// Rebuilt under a live recording: every counted file below was written fresh
-// in the recorded session, including a real input fix found by play-testing
-// (edge-triggered presses are now consumed on first read, so one tap of E
-// cannot exit and re-enter a car inside a single multi-step frame).
+// Solara City — a gta6-01 entry (Node 22, standard library only). The game
+// is this directory's game/ folder: plain static files a desktop browser
+// loads offline (game/index.html and its ES modules, no library, no network
+// request). This program hands it in: it copies game/ and screenshots/ from
+// beside this file to /output and writes /output/dossier.json, the summary
+// the judge reads, with the vendored make.fun library.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -27,6 +16,12 @@ import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+// Solara City hands in game/ plus its four screenshots; fail loudly instead
+// of writing a dossier for a missing game.
+if (!existsSync(join(here, 'game', 'index.html'))) {
+  throw new Error('game/index.html is missing — nothing to hand in');
+}
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });

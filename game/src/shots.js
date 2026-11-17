@@ -1,149 +1,135 @@
-// Staged scenes for the entry's screenshots. Each one drops the live game
-// into a real playable state — a chase, a street corner, a beach drive, a
-// shootout — then lets the normal renderer and HUD paint it, so every shot
-// is the game itself and never a mock-up. ?shot=cover|street|drive|mission
-// (with &seed=N) picks the scene.
-import { ROAD_AT } from './config.js';
-import { makeCar } from './vehicles.js';
-import { makePed } from './pedestrians.js';
-import { setWanted } from './police.js';
-import { startMission } from './missions.js';
+// The screenshot scenes behind ?shot=cover|street|drive|mission. Each one
+// plays the real rules forward from a fresh world for a fixed number of
+// steps, steered by a scripted driver, so the frame is what a short game
+// really looks like and the same seed always gives the same frame.
 
-function placeTraffic(state, specs) {
-  for (const s of specs) {
-    const car = makeCar(s.x, s.y, s.angle, s.type, 'traffic');
-    car.speed = s.speed || 0;
-    car.route = [{ x: s.x + 2000, y: s.y }];
-    state.cars.push(car);
+import { STEP } from './config.js';
+import { SCREEN_PLAY } from './render.js';
+import { ACTION_SHOOT } from './input.js';
+
+const STEPS_STREET = 260;
+const STEPS_MISSION = 240;
+
+/** A scripted stand-in for the keyboard and mouse. */
+function scriptedInput(world, plan) {
+  return {
+    move() {
+      return plan.move || { x: 0, y: 0 };
+    },
+    drive() {
+      return plan.drive ? plan.drive(world.time) : { steer: 0, throttle: 0 };
+    },
+    running() {
+      return false;
+    },
+    mouse() {
+      if (plan.aimAtEnemy) {
+        const e = world.enemies.find((item) => item.health > 0);
+        if (e) {
+          return {
+            x: e.x - world.camera.x + 640,
+            y: e.y - world.camera.y + 400,
+            down: false,
+          };
+        }
+      }
+      return { x: 640, y: 360, down: false };
+    },
+  };
+}
+
+/** Put the player in the nearest car, as if they had just stolen it. When
+ * `at` is given, the player and the car start there, on the nearest road,
+ * facing north — so a staged drive begins in the middle of the city and
+ * the camera never has to clamp to the world's edge. */
+function forceEnterCar(world, at) {
+  const p = world.player;
+  if (at) {
+    const road = world.city.nearestRoad(at.x, at.y);
+    if (road.axis === 'v') {
+      p.x = road.line;
+      p.y = at.y;
+    } else {
+      p.x = at.x;
+      p.y = road.line;
+    }
+    p.angle = -Math.PI / 2;
+  }
+  let best = null;
+  let bestD = Infinity;
+  for (const car of world.cars) {
+    const d = Math.hypot(p.x - car.x, p.y - car.y);
+    if (d < bestD) {
+      bestD = d;
+      best = car;
+    }
+  }
+  if (!best) return;
+  best.x = p.x + 26;
+  best.y = p.y;
+  best.angle = p.angle;
+  // The player's ride reads at a glance: bright paint, white outline.
+  best.color = '#ff5e3a';
+  p.x = best.x;
+  p.y = best.y;
+  p.car = best;
+  best.kind = 'player';
+  best.speed = 120;
+  p.angle = best.angle;
+}
+
+function runSteps(world, input, steps, shootEvery) {
+  for (let i = 0; i < steps; i += 1) {
+    const actions = shootEvery && i % shootEvery === 0 ? ACTION_SHOOT : 0;
+    world.step(STEP, input, actions);
+    if (world.over) break;
   }
 }
 
-function placePeds(state, cx, cy, count) {
-  for (let i = 0; i < count; i++) {
-    const x = cx + state.rng.range(-260, 260);
-    const y = cy + state.rng.range(-180, 180);
-    // Never inside a building, and never on top of the player or their car.
-    if (state.city.isBlocked(x, y, 6)) continue;
-    if (Math.hypot(x - state.player.x, y - state.player.y) < 80) continue;
-    state.peds.push(makePed(x, y, state.rng));
-  }
-}
-
-function aimCamera(state, x, y, zoom) {
-  state.camera.x = x;
-  state.camera.y = y;
-  state.camera.zoom = zoom;
-  state.camera.shake = 0;
-}
-
-export function stageShot(name, state) {
-  const places = state.city.places;
+/**
+ * Set `world` to the named scene and return the screen to draw over it and
+ * the cash figure to show. Unknown names stage the street scene.
+ */
+export function stageShot(name, world) {
+  world.reset(null);
   if (name === 'cover') {
-    // A three-star chase down a downtown avenue: Jay in a red sportscar,
-    // two interceptors on his tail, traffic ahead, the Drop running.
-    const px = ROAD_AT(5);
-    const py = ROAD_AT(5);
-    const car = makeCar(px, py, Math.PI / 2, 'sport', 'player');
-    car.color = '#d94040';
-    car.speed = 380;
-    state.cars.push(car);
-    state.player.car = car;
-    state.player.onFoot = false;
-    state.player.x = px;
-    state.player.y = py;
-    state.player.angle = Math.PI / 2;
-    state.player.money = 2840;
-    const cop1 = makeCar(px - 230, py + 14, Math.PI / 2, 'police', 'police');
-    cop1.speed = 430;
-    const cop2 = makeCar(px - 330, py - 16, Math.PI / 2, 'police', 'police');
-    cop2.speed = 410;
-    state.cars.push(cop1, cop2);
-    placeTraffic(state, [
-      { x: px + 320, y: py - 6, angle: Math.PI / 2, type: 'taxi', speed: 150 },
-      { x: px + 520, y: py + 18, angle: Math.PI / 2, type: 'sedan', speed: 140 },
-      { x: px + 700, y: py - 20, angle: -Math.PI / 2, type: 'van', speed: 120 },
-      { x: px - 60, y: py + 200, angle: 0, type: 'hatch', speed: 130 },
-    ]);
-    placePeds(state, px + 100, py, 8);
-    // Mission index 3 is The Drop: a timed delivery with the cops already on
-    // the player's plate, which is exactly the chase the cover wants to show.
-    startMission(state, 3); // The Drop: 100 seconds, docks target.
-    setWanted(state, 3);
-    state.mission.timer = 87;
-    state.message = { text: 'The Drop — lose the cops, make the docks!', t: 5, color: '#e8b64c' };
-    aimCamera(state, px + 90, py, 0.86);
-  } else if (name === 'street') {
-    // On foot at Plaza del Sol: pedestrians, traffic, the first fare waiting.
-    const px = ROAD_AT(5);
-    const py = ROAD_AT(5);
-    state.player.x = px + 40;
-    state.player.y = py + 60;
-    state.player.angle = Math.PI / 4;
-    state.player.money = 120;
-    placeTraffic(state, [
-      { x: px - 260, y: py - 6, angle: Math.PI / 2, type: 'sedan', speed: 150 },
-      { x: px + 180, y: py + 18, angle: Math.PI / 2, type: 'taxi', speed: 140 },
-      { x: px + 420, y: py - 20, angle: -Math.PI / 2, type: 'coupe', speed: 160 },
-      { x: px - 40, y: py - 260, angle: Math.PI, type: 'van', speed: 120 },
-    ]);
-    placePeds(state, px, py, 14);
-    startMission(state, 0); // First Fare: pick up at the Palmera Grand.
-    state.message = { text: 'First Fare — pick up the client at the Palmera Grand', t: 5, color: '#e8b64c' };
-    aimCamera(state, px + 60, py + 40, 1.0);
-  } else if (name === 'drive') {
-    // A sunset drive along the beach road in a blue coupe, taxi fare aboard.
-    const px = ROAD_AT(6);
-    const py = ROAD_AT(11);
-    const car = makeCar(px, py, Math.PI / 2, 'coupe', 'player');
-    car.speed = 340;
-    state.cars.push(car);
-    state.player.car = car;
-    state.player.onFoot = false;
-    state.player.x = px;
-    state.player.y = py;
-    state.player.angle = Math.PI / 2;
-    state.player.money = 1960;
-    placeTraffic(state, [
-      { x: px + 380, y: py - 6, angle: Math.PI / 2, type: 'sedan', speed: 150 },
-      { x: px + 640, y: py + 18, angle: Math.PI / 2, type: 'hatch', speed: 130 },
-      { x: px - 300, y: py - 20, angle: -Math.PI / 2, type: 'taxi', speed: 140 },
-    ]);
-    placePeds(state, px + 200, py - 120, 6);
-    state.taxi = {
-      fare: 140,
-      target: { x: places.marina.x, y: places.marina.y, name: 'Solara Marina', color: '#5ac8c8' },
-      passenger: null,
-    };
-    state.message = { text: 'Taxi fare: Solara Marina — $140', t: 5, color: '#7ac86a' };
-    aimCamera(state, px + 120, py - 170, 0.8);
-  } else if (name === 'mission') {
-    // Payback: the warehouse shootout. Jay armed, Kestrels closing in.
-    const w = places.warehouse;
-    state.player.x = w.x + 40;
-    state.player.y = w.y + 180;
-    state.player.angle = -Math.PI / 6;
-    state.player.weapon = 'pistol';
-    state.player.ammo = 18;
-    state.player.health = 82;
-    state.player.money = 3420;
-    // startMission('payback') already posts 4 Kestrels at the warehouse.
-    const cop = makeCar(w.x + 420, w.y + 260, Math.PI, 'police', 'police');
-    cop.speed = 200;
-    state.cars.push(cop);
-    placeTraffic(state, [
-      { x: w.x + 520, y: w.y - 200, angle: 0, type: 'van', speed: 120 },
-    ]);
-    setWanted(state, 2);
-    startMission(state, 4); // Payback.
-    state.mission.objective = 'Clear out the Kestrels at the warehouse (4 left)';
-    state.particles.push({
-      x: state.player.x + 30, y: state.player.y - 20,
-      vx: 0, vy: 0, life: 0.3, maxLife: 0.3,
-      color: '#ffd76a', size: 9, kind: 'muzzle',
+    // The getaway: three stars, cop cars closing in, the player flooring it
+    // north from the harbor road toward the middle of the city.
+    world.startMission(4);
+    forceEnterCar(world, { x: 1800, y: 2475 });
+    const input = scriptedInput(world, {
+      drive: (t) => ({ steer: Math.sin(t * 1.1) * 0.3, throttle: 1 }),
     });
-    state.message = { text: 'Payback — the Kestrels jumped one of ours. Settle it.', t: 5, color: '#e8b64c' };
-    aimCamera(state, w.x + 40, w.y + 40, 1.0);
+    runSteps(world, input, 170, 0);
+    return { screen: SCREEN_PLAY, best: world.player.cash };
   }
-  // Let the staged world settle for a few frames so traffic and peds spread out.
-  return name;
+  if (name === 'drive') {
+    // A fast run up the avenue: mission marker ahead, skid marks behind.
+    world.startMission(0);
+    forceEnterCar(world, { x: 1800, y: 2475 });
+    const input = scriptedInput(world, {
+      drive: (t) => ({ steer: Math.sin(t * 1.4) * 0.55, throttle: 1 }),
+    });
+    runSteps(world, input, 170, 0);
+    return { screen: SCREEN_PLAY, best: world.player.cash };
+  }
+  if (name === 'mission') {
+    // The Meridian shootout: gunmen in the plaza, the player returning fire.
+    world.startMission(3);
+    const plaza = world.mission.steps[0].at;
+    // Inside the goto radius, so the first step completes and the gunmen spawn.
+    world.player.x = plaza.x - 30;
+    world.player.y = plaza.y + 30;
+    world.camera.x = world.player.x;
+    world.camera.y = world.player.y;
+    world.player.ammo = 60;
+    const input = scriptedInput(world, { aimAtEnemy: true });
+    runSteps(world, input, STEPS_MISSION, 14);
+    return { screen: SCREEN_PLAY, best: world.player.cash };
+  }
+  // Street: on foot in the city, traffic and pedestrians, a job waiting.
+  world.startMission(0);
+  const input = scriptedInput(world, { move: { x: 0.6, y: 0.8 } });
+  runSteps(world, input, STEPS_STREET, 0);
+  return { screen: SCREEN_PLAY, best: world.player.cash };
 }

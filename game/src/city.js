@@ -1,139 +1,180 @@
-// Solara City itself: a sun-soaked coastal town on a 12x12 road grid.
-// generateCity rolls the dice once per block — tower, shops, a park, a car
-// park — then pins the story's named places to fixed intersections so the
-// missions always know where to send the player. It also answers the two
-// questions every system asks: "is this spot blocked?" and "where's the road?"
-import { WORLD_W, WORLD_H, ROAD_W, BLOCK, GRID_N, ROAD_AT } from './config.js';
+// Solara City itself: a procedurally generated grid of streets, blocks,
+// buildings and parks, built once from a seed so the same seed always gives
+// the same city. The world also answers the questions the traffic, the
+// pedestrians and the missions ask it: where is the nearest road, what lane
+// runs here, is this point inside a building.
 
-const DOWNTOWN_COLORS = ['#c96f4a', '#b45a68', '#8a6d9e', '#5a7d8c', '#a8895a', '#7a5a8c'];
-const OLD_TOWN_COLORS = ['#d9a05b', '#c98a4b', '#b87a5a', '#d9b06a'];
-const MARINA_COLORS = ['#5a8fa8', '#6aa8b8', '#4a7d99', '#7ab0a8'];
-const ROOF_COLORS = ['#3d4457', '#4a3d55', '#2f3d4a', '#54423a'];
+import { WORLD_W, WORLD_H, ROAD_SPACING, ROAD_W, SIDEWALK_W, PALETTE } from './config.js';
 
-export function districtAt(x, y) {
-  if (y > 3480) return 'beach';
-  if (x > 2600 && y > 2000) return 'marina';
-  if (x < 1400 && y > 2200) return 'oldtown';
-  if (y < 1300 && x > 1200 && x < 2600) return 'downtown';
-  return 'midtown';
-}
+const ROOF_COLORS = [PALETTE.buildingRoof, PALETTE.buildingRoof2, PALETTE.buildingRoof3, '#a89a6b', '#7d8ba0'];
+const DISTRICTS = [
+  { name: 'Meridian Plaza', x: 0.5, y: 0.42 },
+  { name: 'Old Harbor', x: 0.5, y: 0.94 },
+  { name: 'Northgate', x: 0.5, y: 0.08 },
+  { name: 'Sunset Strip', x: 0.12, y: 0.5 },
+  { name: 'The Docks', x: 0.88, y: 0.85 },
+  { name: 'Civic Center', x: 0.85, y: 0.2 },
+];
 
-function makeBuilding(x, y, w, h, color, rng, floors) {
-  return {
-    x, y, w, h, color,
-    roof: rng.pick(ROOF_COLORS),
-    floors,
-    windows: rng.int(2, 4),
-    sign: rng.chance(0.35) ? rng.pick(['HOTEL', 'CAFÉ', 'BAR', 'SHOP', 'BANK', 'CLUB', 'GYM', 'PIZZA']) : null,
-  };
-}
+export function buildCity(rng) {
+  const vRoads = [];
+  const hRoads = [];
+  for (let x = ROAD_SPACING / 2; x < WORLD_W; x += ROAD_SPACING) vRoads.push(x);
+  for (let y = ROAD_SPACING / 2; y < WORLD_H; y += ROAD_SPACING) hRoads.push(y);
 
-export function generateCity(rng) {
   const buildings = [];
   const parks = [];
   const trees = [];
-  const lots = [];
 
-  for (let bx = 0; bx < GRID_N - 1; bx++) {
-    for (let by = 0; by < GRID_N - 1; by++) {
-      const x0 = ROAD_AT(bx) + ROAD_W / 2 + 8;
-      const y0 = ROAD_AT(by) + ROAD_W / 2 + 8;
-      const w = BLOCK - ROAD_W - 16;
-      const h = BLOCK - ROAD_W - 16;
-      const cx = x0 + w / 2;
-      const cy = y0 + h / 2;
-      const district = districtAt(cx, cy);
-      // The southern blocks are beach, not streets: no buildings, parks or
-      // car parks there — the sand and the sea are drawn by the renderer.
-      if (district === 'beach') continue;
-      const roll = rng.next();
-      if (roll < 0.14) {
-        // A park: lawn, a crossing path, and a scatter of trees.
-        parks.push({ x: x0, y: y0, w, h, district });
-        const treeCount = rng.int(5, 9);
-        for (let i = 0; i < treeCount; i++) {
-          trees.push({
-            x: rng.range(x0 + 16, x0 + w - 16),
-            y: rng.range(y0 + 16, y0 + h - 16),
-            r: rng.range(9, 15),
-            shade: rng.pick(['#3f7d44', '#4c8a3f', '#35703d']),
-          });
+  // Each block between four roads holds buildings, or a park.
+  for (let i = 0; i < vRoads.length - 1; i += 1) {
+    for (let j = 0; j < hRoads.length - 1; j += 1) {
+      const bx = vRoads[i] + ROAD_W / 2 + SIDEWALK_W;
+      const by = hRoads[j] + ROAD_W / 2 + SIDEWALK_W;
+      const bw = vRoads[i + 1] - vRoads[i] - ROAD_W - SIDEWALK_W * 2;
+      const bh = hRoads[j + 1] - hRoads[j] - ROAD_W - SIDEWALK_W * 2;
+      if (rng.chance(0.22)) {
+        const park = { x: bx, y: by, w: bw, h: bh };
+        parks.push(park);
+        const count = rng.int(4, 9);
+        for (let t = 0; t < count; t += 1) {
+          trees.push({ x: bx + rng.range(14, bw - 14), y: by + rng.range(14, bh - 14), r: rng.range(7, 12) });
         }
         continue;
       }
-      if (roll < 0.22) {
-        // A car park. The parked cars themselves are spawned by vehicles.js.
-        lots.push({ x: x0, y: y0, w, h, district });
-        continue;
-      }
-      // Buildings: a single downtown tower, or a row of two or three shops.
-      const palette = district === 'downtown' ? DOWNTOWN_COLORS
-        : district === 'oldtown' ? OLD_TOWN_COLORS
-        : district === 'marina' ? MARINA_COLORS : DOWNTOWN_COLORS;
-      if (district === 'downtown' && rng.chance(0.5)) {
-        const bw = rng.range(120, 190);
-        const bh = rng.range(120, 190);
-        buildings.push(makeBuilding(cx - bw / 2, cy - bh / 2, bw, bh, rng.pick(palette), rng, 3));
-      } else {
-        const shopCount = rng.int(2, 3);
-        for (let i = 0; i < shopCount; i++) {
-          const bw = rng.range(70, 110);
-          const bh = rng.range(70, 110);
-          const px = x0 + rng.range(4, w - bw - 4);
-          const py = y0 + rng.range(4, h - bh - 4);
-          buildings.push(makeBuilding(px, py, bw, bh, rng.pick(palette), rng, 1));
+      const cols = rng.chance(0.5) ? 2 : 1;
+      const rows = rng.chance(0.5) ? 2 : 1;
+      for (let c = 0; c < cols; c += 1) {
+        for (let r = 0; r < rows; r += 1) {
+          const w = (bw - (cols - 1) * 18) / cols;
+          const h = (bh - (rows - 1) * 18) / rows;
+          buildings.push({
+            x: bx + c * (w + 18),
+            y: by + r * (h + 18),
+            w,
+            h,
+            color: rng.pick(ROOF_COLORS),
+            shade: rng.range(0.85, 1.1),
+          });
         }
       }
     }
   }
 
-  // Story places, pinned to fixed intersections so missions can find them.
-  const places = {
-    martasGarage: { x: ROAD_AT(2), y: ROAD_AT(2), name: "Marta's Garage", color: '#e8b64c' },
-    palmeraHotel: { x: ROAD_AT(6), y: ROAD_AT(1), name: 'Palmera Grand Hotel', color: '#e87a5a' },
-    raysGarage: { x: ROAD_AT(9), y: ROAD_AT(3), name: "Ray's Chop Shop", color: '#7ab0e8' },
-    marina: { x: ROAD_AT(9), y: ROAD_AT(10), name: 'Solara Marina', color: '#5ac8c8' },
-    docks: { x: ROAD_AT(11), y: ROAD_AT(10), name: 'Harbor Docks', color: '#c8a05a' },
-    warehouse: { x: ROAD_AT(1), y: ROAD_AT(9), name: 'Kestrel Warehouse', color: '#b05a6a' },
-    plaza: { x: ROAD_AT(5), y: ROAD_AT(5), name: 'Plaza del Sol', color: '#e8c85a' },
-    beachBar: { x: ROAD_AT(6), y: ROAD_AT(11), name: 'Sunset Bar', color: '#ff9a5a' },
+  // The southern edge is the harbor: sand, then water.
+  const harbor = { y: WORLD_H - 170, waterY: WORLD_H - 90 };
+
+  // Parked cars line the roads.
+  const parking = [];
+  for (let i = 0; i < 46; i += 1) {
+    const horizontal = rng.chance(0.5);
+    if (horizontal) {
+      const y = rng.pick(hRoads);
+      parking.push({ x: rng.range(140, WORLD_W - 140), y: y + (rng.chance(0.5) ? -1 : 1) * (ROAD_W / 2 - 14), angle: rng.chance(0.5) ? 0 : Math.PI });
+    } else {
+      const x = rng.pick(vRoads);
+      parking.push({ x: x + (rng.chance(0.5) ? -1 : 1) * (ROAD_W / 2 - 14), y: rng.range(140, WORLD_H - 260), angle: rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2 });
+    }
+  }
+
+  const city = {
+    vRoads,
+    hRoads,
+    buildings,
+    parks,
+    trees,
+    parking,
+    harbor,
+    districts: DISTRICTS.map((d) => ({ name: d.name, x: d.x * WORLD_W, y: d.y * WORLD_H })),
   };
 
-  return {
-    buildings, parks, trees, lots, places,
-    // True when a circle of radius r at (x, y) would hit a building, the
-    // world border, or the sea along the south edge.
-    isBlocked(x, y, r) {
-      if (x < 40 + r || x > WORLD_W - 40 - r || y < 40 + r) return true;
-      if (y > 3560 - r) return true; // the sea
-      for (let i = 0; i < buildings.length; i++) {
-        const b = buildings[i];
-        if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return true;
-      }
-      return false;
-    },
-    // The closest road centreline coordinate along one axis.
-    nearestRoadCoord(v) {
-      let best = ROAD_AT(0);
-      for (let i = 0; i < GRID_N; i++) {
-        if (Math.abs(ROAD_AT(i) - v) < Math.abs(best - v)) best = ROAD_AT(i);
-      }
-      return best;
-    },
-    roadIndex(v) {
-      let best = 0;
-      for (let i = 0; i < GRID_N; i++) {
-        if (Math.abs(ROAD_AT(i) - v) < Math.abs(ROAD_AT(best) - v)) best = i;
-      }
-      return best;
-    },
-    // True when the point sits on asphalt (within a road band, either way).
-    onRoad(x, y) {
-      for (let i = 0; i < GRID_N; i++) {
-        if (Math.abs(x - ROAD_AT(i)) < ROAD_W / 2 + 4) return true;
-        if (Math.abs(y - ROAD_AT(i)) < ROAD_W / 2 + 4) return true;
-      }
-      return false;
-    },
+  // --- Queries -------------------------------------------------------------
+
+  /** True when the point is on a road surface (not sidewalk, not a block). */
+  city.isOnRoad = (x, y) => {
+    for (const rx of vRoads) if (Math.abs(x - rx) < ROAD_W / 2) return true;
+    for (const ry of hRoads) if (Math.abs(y - ry) < ROAD_W / 2) return true;
+    return false;
   };
+
+  /** The road axis ('v' or 'h') and centre line nearest the point. */
+  city.nearestRoad = (x, y) => {
+    let best = null;
+    for (const rx of vRoads) {
+      const d = Math.abs(x - rx);
+      if (!best || d < best.d) best = { axis: 'v', line: rx, d };
+    }
+    for (const ry of hRoads) {
+      const d = Math.abs(y - ry);
+      if (!best || d < best.d) best = { axis: 'h', line: ry, d };
+    }
+    return best;
+  };
+
+  /** Push a circle out of every building it overlaps; returns true on a hit. */
+  city.collideCircle = (body) => {
+    let hit = false;
+    for (const b of buildings) {
+      const cx = Math.max(b.x, Math.min(body.x, b.x + b.w));
+      const cy = Math.max(b.y, Math.min(body.y, b.y + b.h));
+      const dx = body.x - cx;
+      const dy = body.y - cy;
+      const dist2 = dx * dx + dy * dy;
+      if (dist2 < body.r * body.r) {
+        hit = true;
+        if (dist2 > 0.0001) {
+          const dist = Math.sqrt(dist2);
+          body.x = cx + (dx / dist) * body.r;
+          body.y = cy + (dy / dist) * body.r;
+        } else {
+          // Centre inside the building: leave by the nearest face.
+          const left = body.x - b.x + body.r;
+          const right = b.x + b.w - body.x + body.r;
+          const top = body.y - b.y + body.r;
+          const bottom = b.y + b.h - body.y + body.r;
+          const min = Math.min(left, right, top, bottom);
+          if (min === left) body.x = b.x - body.r;
+          else if (min === right) body.x = b.x + b.w + body.r;
+          else if (min === top) body.y = b.y - body.r;
+          else body.y = b.y + b.h + body.r;
+        }
+      }
+    }
+    return hit;
+  };
+
+  city.clamp = (body, margin) => {
+    body.x = Math.max(margin, Math.min(WORLD_W - margin, body.x));
+    body.y = Math.max(margin, Math.min(WORLD_H - margin, body.y));
+  };
+
+  city.randomRoadPoint = () => {
+    if (rng.chance(0.5)) {
+      return { x: rng.pick(vRoads), y: rng.range(80, WORLD_H - 220) };
+    }
+    return { x: rng.range(80, WORLD_W - 80), y: rng.pick(hRoads) };
+  };
+
+  city.randomSidewalkPoint = () => {
+    const p = city.randomRoadPoint();
+    const road = city.nearestRoad(p.x, p.y);
+    const off = ROAD_W / 2 + SIDEWALK_W / 2;
+    if (road.axis === 'v') return { x: p.x + (rng.chance(0.5) ? -off : off), y: p.y };
+    return { x: p.x, y: p.y + (rng.chance(0.5) ? -off : off) };
+  };
+
+  city.districtAt = (x, y) => {
+    let best = city.districts[0];
+    let bestD = Infinity;
+    for (const d of city.districts) {
+      const dd = (d.x - x) ** 2 + (d.y - y) ** 2;
+      if (dd < bestD) {
+        bestD = dd;
+        best = d;
+      }
+    }
+    return best.name;
+  };
+
+  return city;
 }

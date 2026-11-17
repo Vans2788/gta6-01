@@ -1,321 +1,230 @@
-// Missions and story: Jay Cruz, a driver-for-hire in Solara City, takes jobs
-// from fixer Marta Reyes while the Kestrel crew moves against them. Six story
-// missions, taxi fares and hidden cash stashes on the side — and every bit of
-// progress lands in localStorage, so a reload picks up where the player left off.
-import { SAVE_KEY, STASH_VALUE, TAXI_FARE_BASE, PISTOL_AMMO_START, ROAD_AT } from './config.js';
-import { makeCar } from './vehicles.js';
-import { spawnRival } from './police.js';
-import { setWanted } from './police.js';
+// The story of Solara City: six missions for Mara Voss, a getaway driver
+// working for the fixer Dario Kestrel. Each mission is a list of steps; the
+// world runs them and this module decides when a step is done, what spawns
+// and what the HUD should say. Nothing here draws or reads input.
 
-export const MISSION_DEFS = [
+import { MISSION_PAYOUTS, ROAD_W } from './config.js';
+
+const STORY = {
+  hero: 'Mara Voss',
+  fixer: 'Dario Kestrel',
+};
+
+function snapToRoad(city, x, y) {
+  const road = city.nearestRoad(x, y);
+  if (road.axis === 'v') return { x: road.line, y };
+  return { x, y: road.line };
+}
+
+function districtPoint(city, name) {
+  const d = city.districts.find((item) => item.name === name);
+  return { x: d.x, y: d.y };
+}
+
+function onSidewalk(city, x, y) {
+  const road = city.nearestRoad(x, y);
+  const off = ROAD_W / 2 + 14;
+  if (road.axis === 'v') return { x: road.line + off, y };
+  return { x, y: road.line + off };
+}
+
+export const MISSIONS = [
   {
-    id: 'first-fare', title: 'First Fare', reward: 150,
-    brief: "Marta: a client waits at the Palmera Grand. Pick them up, drop them at the Marina. Don't keep them waiting.",
+    title: 'First Fare',
+    briefing: `${STORY.fixer} needs a driver. Pick up Lena at Meridian Plaza and get her to Old Harbor — smooth, no cops.`,
   },
   {
-    id: 'borrowed-wheels', title: 'Borrowed Wheels', reward: 300,
-    brief: "Marta: Ray needs a red sportscar, no questions. One is parked in Downtown. Bring it to Ray's Chop Shop.",
+    title: 'The Stash',
+    briefing: `A package is waiting at The Docks. Grab it on foot and walk it to the drop in Sunset Strip.`,
   },
   {
-    id: 'heat-wave', title: 'Heat Wave', reward: 250,
-    brief: "Marta: the cops are crawling the block. Shake a 2-star heat and get back to the garage clean.",
+    title: 'Hot Wheels',
+    briefing: `A yellow Comet GT is parked at Civic Center, keys in it. Take it — and take it to the Northgate garage.`,
   },
   {
-    id: 'the-drop', title: 'The Drop', reward: 500,
-    brief: "Marta: a package for the Harbor Docks. 100 seconds. The cops already know your plate — drive like it.",
+    title: 'Meridian Shootout',
+    briefing: `Three of ${STORY.fixer}'s rivals are waiting at Meridian Plaza. Settle it, then get clear.`,
   },
   {
-    id: 'payback', title: 'Payback', reward: 700,
-    brief: "Marta: the Kestrels jumped one of ours at their warehouse. Go in armed, settle it, then come home.",
+    title: 'The Getaway',
+    briefing: `The job went loud. Three stars and the whole city after you — survive the chase, then vanish.`,
   },
   {
-    id: 'king-of-solara', title: 'King of Solara', reward: 1200,
-    brief: "Marta: last job. Sunset Bar to the Plaza, 90 seconds, three stars on you. Do this and Solara is ours.",
+    title: 'The Big Score',
+    briefing: `The bank van stops at Civic Center. Take the cash, outrun four stars, and disappear. This is the one.`,
   },
 ];
 
-export function loadSave() {
-  try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (typeof data !== 'object' || data === null) return null;
-    return data;
-  } catch {
+/** Build the step list for a mission, with concrete points in this city. */
+export function buildMissionSteps(city, index) {
+  const plaza = districtPoint(city, 'Meridian Plaza');
+  const harbor = districtPoint(city, 'Old Harbor');
+  const docks = districtPoint(city, 'The Docks');
+  const strip = districtPoint(city, 'Sunset Strip');
+  const civic = districtPoint(city, 'Civic Center');
+  const northgate = districtPoint(city, 'Northgate');
+  switch (index) {
+    case 0: {
+      const pickup = snapToRoad(city, plaza.x, plaza.y);
+      const drop = snapToRoad(city, harbor.x, harbor.y);
+      return [
+        { kind: 'get-car', text: 'Get in a car — any car will do' },
+        { kind: 'goto', at: pickup, r: 70, text: 'Pick up Lena at Meridian Plaza' },
+        { kind: 'goto', at: drop, r: 70, text: 'Drive Lena to Old Harbor' },
+      ];
+    }
+    case 1: {
+      const stash = onSidewalk(city, docks.x, docks.y);
+      const drop = onSidewalk(city, strip.x, strip.y);
+      return [
+        { kind: 'goto', at: stash, r: 46, text: 'Pick up the stash at The Docks', onFoot: true },
+        { kind: 'goto', at: drop, r: 46, text: 'Deliver the stash to Sunset Strip', onFoot: true },
+      ];
+    }
+    case 2: {
+      const carAt = snapToRoad(city, civic.x, civic.y);
+      const garage = snapToRoad(city, northgate.x, northgate.y);
+      return [
+        { kind: 'goto', at: carAt, r: 80, text: 'Find the yellow Comet at Civic Center' },
+        { kind: 'steal-car', text: 'Steal the Comet GT' },
+        { kind: 'goto', at: garage, r: 70, text: 'Deliver it to the Northgate garage' },
+      ];
+    }
+    case 3: {
+      const plazaAt = snapToRoad(city, plaza.x, plaza.y);
+      const safe = snapToRoad(city, harbor.x, harbor.y);
+      return [
+        { kind: 'goto', at: plazaAt, r: 80, text: 'Meet the gunmen at Meridian Plaza' },
+        { kind: 'kill', count: 3, text: 'Take down all three gunmen', spawnAt: plazaAt },
+        { kind: 'goto', at: safe, r: 70, text: 'Get clear — reach the safehouse' },
+      ];
+    }
+    case 4: {
+      const safe = snapToRoad(city, harbor.x, harbor.y);
+      return [
+        { kind: 'get-car', text: 'Get a car — the cops are coming' },
+        { kind: 'survive', seconds: 60, wanted: 3, text: 'Survive the chase — stay alive' },
+        { kind: 'goto', at: safe, r: 70, text: 'Reach the safehouse in Old Harbor' },
+      ];
+    }
+    default: {
+      const van = snapToRoad(city, civic.x, civic.y);
+      const safe = snapToRoad(city, harbor.x, harbor.y);
+      return [
+        { kind: 'goto', at: van, r: 70, text: 'Reach the bank van at Civic Center' },
+        { kind: 'grab', at: van, r: 50, text: 'Grab the cash' },
+        { kind: 'goto', at: safe, r: 70, text: 'Escape to the safehouse — four stars!' },
+      ];
+    }
+  }
+}
+
+/** Start a mission: reset its state and set up anything it needs. */
+export function startMission(world, index) {
+  const steps = buildMissionSteps(world.city, index);
+  world.mission = {
+    index,
+    title: MISSIONS[index].title,
+    briefing: MISSIONS[index].briefing,
+    steps,
+    step: 0,
+    active: true,
+    timer: 0,
+    marker: null,
+    spawned: false,
+  };
+  if (index === 4) world.setWanted(3);
+  if (index === 2) world.spawnMissionCar(steps[0].at);
+  refreshMarker(world);
+}
+
+function refreshMarker(world) {
+  const m = world.mission;
+  if (!m.active) {
+    m.marker = null;
+    return;
+  }
+  const step = m.steps[m.step];
+  m.marker = step && step.at ? { x: step.at.x, y: step.at.y, r: step.r || 60 } : null;
+}
+
+/** The current objective line for the HUD. */
+export function missionObjective(world) {
+  const m = world.mission;
+  if (!m.active) return 'No job right now — press M for the next one.';
+  const step = m.steps[m.step];
+  if (step.kind === 'survive') return `${step.text} — ${Math.ceil(step.seconds - m.timer)}s left`;
+  if (step.kind === 'kill') return `${step.text} — ${world.enemies.length} left`;
+  return step.text;
+}
+
+/** Advance the mission one fixed step. Returns 'complete' when it pays out. */
+export function updateMission(world, dt) {
+  const m = world.mission;
+  if (!m.active) return null;
+  const step = m.steps[m.step];
+  const p = world.player;
+  const distTo = (at) => Math.hypot(p.x - at.x, p.y - at.y);
+
+  function advance() {
+    m.step += 1;
+    m.timer = 0;
+    m.spawned = false;
+    if (m.step >= m.steps.length) {
+      m.active = false;
+      m.marker = null;
+      m.lastPayout = MISSION_PAYOUTS[m.index];
+      p.cash += m.lastPayout;
+      // The next job is the one to save: continuing resumes after this one.
+      m.index = Math.min(m.index + 1, MISSIONS.length);
+      world.addEvent('mission-done');
+      world.audio.missionDone();
+      world.saveProgress();
+      return 'complete';
+    }
+    const next = m.steps[m.step];
+    if (next.kind === 'kill' && !m.spawned) {
+      world.spawnEnemies(next.spawnAt, next.count);
+      m.spawned = true;
+    }
+    if (next.kind === 'grab') world.setWanted(4);
+    refreshMarker(world);
     return null;
   }
-}
 
-export function writeSave(state) {
-  try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify({
-      money: state.player.money,
-      missionIndex: state.progress.missionIndex,
-      stashes: state.progress.stashes,
-      stats: state.stats,
-      completed: state.progress.completed,
-    }));
-  } catch {
-    // Storage off: progress lasts this visit only.
-  }
-}
-
-export function applySave(state, save) {
-  if (!save) return;
-  state.player.money = save.money || 0;
-  state.progress.missionIndex = save.missionIndex || 0;
-  state.progress.stashes = save.stashes || [];
-  state.progress.completed = save.completed || [];
-  if (save.stats) Object.assign(state.stats, save.stats);
-}
-
-export function createProgress() {
-  return { missionIndex: 0, stashes: [], completed: [] };
-}
-
-function markerAt(state, place) {
-  return { x: place.x, y: place.y, name: place.name, color: place.color };
-}
-
-export function startMission(state, index) {
-  const def = MISSION_DEFS[index];
-  if (!def) return false;
-  const places = state.city.places;
-  const mission = {
-    def, index,
-    stage: 0,
-    timer: 0,
-    target: null,
-    objective: '',
-    car: null,
-    client: null,
-    done: false,
-  };
-  state.mission = mission;
-  state.audio.missionStart();
-  switch (def.id) {
-    case 'first-fare': {
-      mission.target = markerAt(state, places.palmeraHotel);
-      mission.objective = 'Pick up the client at the Palmera Grand Hotel';
+  switch (step.kind) {
+    case 'get-car':
+      if (p.car) return advance();
       break;
-    }
-    case 'borrowed-wheels': {
-      // A red sportscar parked in Downtown.
-      const car = makeCar(ROAD_AT(4) + 200, ROAD_AT(2) + 26, Math.PI / 2, 'sport', 'parked');
-      car.color = '#d94040';
-      state.cars.push(car);
-      mission.car = car;
-      mission.target = { x: car.x, y: car.y, name: 'Red Sportscar', color: '#d94040' };
-      mission.objective = 'Steal the red sportscar in Downtown';
+    case 'goto':
+      if (step.onFoot && p.car) break;
+      if (distTo(step.at) < step.r) return advance();
       break;
-    }
-    case 'heat-wave': {
-      setWanted(state, 2);
-      mission.target = markerAt(state, places.martasGarage);
-      mission.objective = 'Lose the 2-star heat, then return to Marta\'s Garage';
+    case 'steal-car':
+      if (p.car && p.car.missionCar) return advance();
       break;
-    }
-    case 'the-drop': {
-      mission.timer = 100;
-      mission.target = markerAt(state, places.docks);
-      mission.objective = 'Deliver the package to the Harbor Docks — 100 seconds';
-      setWanted(state, 2);
-      break;
-    }
-    case 'payback': {
-      state.player.weapon = 'pistol';
-      state.player.ammo = Math.max(state.player.ammo, PISTOL_AMMO_START);
-      const w = places.warehouse;
-      for (let i = 0; i < 4; i++) {
-        spawnRival(state, w.x + state.rng.range(-160, 160), w.y + state.rng.range(-120, 120));
+    case 'kill':
+      if (!m.spawned) {
+        world.spawnEnemies(step.spawnAt, step.count);
+        m.spawned = true;
       }
-      mission.target = markerAt(state, places.warehouse);
-      mission.objective = 'Clear out the Kestrels at the warehouse (4 left)';
-      mission.onRivalDown = (s) => {
-        const left = s.rivals.length;
-        if (left > 0) {
-          mission.objective = `Clear out the Kestrels at the warehouse (${left} left)`;
-        } else {
-          mission.stage = 1;
-          mission.target = markerAt(s, s.city.places.martasGarage);
-          mission.objective = 'Warehouse clear. Get back to Marta\'s Garage';
-        }
-      };
+      if (world.enemies.length === 0) return advance();
       break;
-    }
-    case 'king-of-solara': {
-      mission.timer = 90;
-      setWanted(state, 3);
-      mission.target = markerAt(state, places.plaza);
-      mission.objective = 'Reach Plaza del Sol in 90 seconds — 3 stars on you';
+    case 'survive':
+      if (world.wanted < step.wanted) world.setWanted(step.wanted);
+      m.timer += dt;
+      if (m.timer >= step.seconds) return advance();
       break;
-    }
+    case 'grab':
+      if (distTo(step.at) < step.r) {
+        p.cash += 500;
+        world.addEvent('cash-grab');
+        world.audio.cash();
+        return advance();
+      }
+      break;
     default:
       break;
   }
-  state.message = { text: `${def.title} — ${def.brief}`, t: 5, color: '#e8b64c' };
-  return true;
-}
-
-function completeMission(state) {
-  const mission = state.mission;
-  if (!mission || mission.done) return;
-  mission.done = true;
-  state.player.money += mission.def.reward;
-  state.progress.completed.push(mission.def.id);
-  state.progress.missionIndex = Math.min(MISSION_DEFS.length, mission.index + 1);
-  state.audio.missionDone();
-  state.audio.cash();
-  state.message = {
-    text: `Mission complete: ${mission.def.title} — +$${mission.def.reward}`,
-    t: 4, color: '#7ac86a',
-  };
-  state.mission = null;
-  writeSave(state);
-}
-
-function failMission(state, reason) {
-  const mission = state.mission;
-  if (!mission) return;
-  state.audio.missionFail();
-  state.message = { text: `Mission failed: ${reason}`, t: 4, color: '#ff6a5a' };
-  state.mission = null;
-  setWanted(state, Math.max(0, state.wanted - 1));
-}
-
-function nearTarget(state, radius) {
-  const m = state.mission;
-  if (!m || !m.target) return false;
-  return Math.hypot(state.player.x - m.target.x, state.player.y - m.target.y) < radius;
-}
-
-export function updateMissions(state, dt) {
-  const mission = state.mission;
-  if (mission) {
-    if (mission.timer > 0) {
-      mission.timer -= dt;
-      if (mission.timer <= 0) {
-        failMission(state, 'Out of time.');
-        return;
-      }
-    }
-    switch (mission.def.id) {
-      case 'first-fare': {
-        if (mission.stage === 0 && nearTarget(state, 70)) {
-          mission.stage = 1;
-          mission.objective = 'Client aboard. Drop them at the Solara Marina';
-          mission.target = markerAt(state, state.city.places.marina);
-          state.message = { text: 'Client: "Marina, and step on it."', t: 3, color: '#e8b64c' };
-        } else if (mission.stage === 1 && nearTarget(state, 70)) {
-          completeMission(state);
-        }
-        break;
-      }
-      case 'borrowed-wheels': {
-        if (mission.stage === 0 && state.player.car === mission.car) {
-          mission.stage = 1;
-          mission.objective = "Got it. Deliver it to Ray's Chop Shop";
-          mission.target = markerAt(state, state.city.places.raysGarage);
-        } else if (mission.stage === 1) {
-          if (!state.cars.includes(mission.car) || mission.car.removed) {
-            failMission(state, 'The sportscar was destroyed.');
-          } else if (state.player.car === mission.car && nearTarget(state, 80)) {
-            completeMission(state);
-          }
-        }
-        break;
-      }
-      case 'heat-wave': {
-        if (state.wanted === 0) {
-          mission.stage = 1;
-          mission.objective = "Clean. Get back to Marta's Garage";
-          if (nearTarget(state, 80)) completeMission(state);
-        }
-        break;
-      }
-      case 'the-drop': {
-        if (nearTarget(state, 80)) completeMission(state);
-        break;
-      }
-      case 'payback': {
-        if (mission.stage === 1 && nearTarget(state, 80)) completeMission(state);
-        break;
-      }
-      case 'king-of-solara': {
-        if (nearTarget(state, 80)) completeMission(state);
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  // Taxi fares: a waiting pedestrian flags the player's car down.
-  if (!mission && state.player.car && !state.taxi && state.taxiCooldown <= 0) {
-    for (const ped of state.peds) {
-      if (ped.dead) continue;
-      const d = Math.hypot(ped.x - state.player.x, ped.y - state.player.y);
-      if (d < 120 && state.rng.chance(0.02)) {
-        const dest = state.city.places[state.rng.pick(Object.keys(state.city.places))];
-        // Fares run $60–$180: the base plus up to six $20 steps by distance.
-        state.taxi = {
-          fare: TAXI_FARE_BASE + state.rng.int(0, 6) * 20,
-          target: markerAt(state, dest),
-          passenger: ped,
-        };
-        state.message = { text: `Taxi fare: ${dest.name} — $${state.taxi.fare}`, t: 3, color: '#7ac86a' };
-        state.peds = state.peds.filter((p) => p !== ped);
-        break;
-      }
-    }
-  }
-  if (state.taxi) {
-    const t = state.taxi;
-    if (Math.hypot(state.player.x - t.target.x, state.player.y - t.target.y) < 80) {
-      state.player.money += t.fare;
-      state.stats.fares += 1;
-      state.audio.cash();
-      state.message = { text: `Fare paid: +$${t.fare}`, t: 2.5, color: '#7ac86a' };
-      state.taxi = null;
-      state.taxiCooldown = 20;
-      writeSave(state);
-    } else if (!state.player.car) {
-      state.taxi = null;
-      state.taxiCooldown = 15;
-      state.message = { text: 'The fare walked off.', t: 2, color: '#ffd76a' };
-    }
-  }
-  state.taxiCooldown = Math.max(0, (state.taxiCooldown || 0) - dt);
-
-  // Hidden cash stashes.
-  for (const stash of state.stashes) {
-    if (stash.taken) continue;
-    if (Math.hypot(state.player.x - stash.x, state.player.y - stash.y) < 34) {
-      stash.taken = true;
-      state.player.money += STASH_VALUE;
-      state.progress.stashes.push(stash.id);
-      state.audio.cash();
-      state.message = { text: `Cash stash found: +$${STASH_VALUE}`, t: 2.5, color: '#7ac86a' };
-      writeSave(state);
-    }
-  }
-}
-
-export function spawnStashes(state, rng) {
-  state.stashes = [];
-  for (let i = 0; i < 10; i++) {
-    const ix = rng.int(0, 11);
-    const iy = rng.int(0, 11);
-    const x = ROAD_AT(ix) + rng.pick([-52, 52]) + rng.range(-40, 40);
-    const y = ROAD_AT(iy) + rng.pick([-52, 52]) + rng.range(-40, 40);
-    state.stashes.push({ id: i, x, y, taken: state.progress.stashes.includes(i) });
-  }
-}
-
-export function nextMissionAvailable(state) {
-  return state.progress.missionIndex < MISSION_DEFS.length;
-}
-
-export function nextMissionDef(state) {
-  return MISSION_DEFS[state.progress.missionIndex];
+  return null;
 }
