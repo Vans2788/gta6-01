@@ -1,53 +1,89 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard and mouse, sampled once per frame by the loop. Actions carry the
+// player's intent ("run", "steal a car") rather than the key that fires them,
+// so rebinding later is a one-line change in the table below.
+export const ACTION_UP = 'up';
+export const ACTION_DOWN = 'down';
+export const ACTION_LEFT = 'left';
+export const ACTION_RIGHT = 'right';
+export const ACTION_ENTER_CAR = 'enterCar';
+export const ACTION_ATTACK = 'attack';
+export const ACTION_BRAKE = 'brake';
+export const ACTION_PAUSE = 'pause';
+export const ACTION_CONFIRM = 'confirm';
+export const ACTION_MUTE = 'mute';
+export const ACTION_RUN = 'run';
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+const KEY_BINDINGS = {
+  KeyW: ACTION_UP, ArrowUp: ACTION_UP,
+  KeyS: ACTION_DOWN, ArrowDown: ACTION_DOWN,
+  KeyA: ACTION_LEFT, ArrowLeft: ACTION_LEFT,
+  KeyD: ACTION_RIGHT, ArrowRight: ACTION_RIGHT,
+  KeyE: ACTION_ENTER_CAR,
+  Space: ACTION_BRAKE,
+  KeyF: ACTION_ATTACK,
+  KeyP: ACTION_PAUSE, Escape: ACTION_PAUSE,
+  Enter: ACTION_CONFIRM,
+  KeyM: ACTION_MUTE,
+  ShiftLeft: ACTION_RUN, ShiftRight: ACTION_RUN,
+};
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+export function createInput(canvas) {
+  const held = new Set();
+  const pressed = new Set();
+  const mouse = { x: 0, y: 0, down: false, clicked: false };
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+  function keyDown(event) {
+    const action = KEY_BINDINGS[event.code];
+    if (!action) return;
+    if (event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
+    if (!event.repeat) pressed.add(action);
+    held.add(action);
+  }
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+  function keyUp(event) {
+    const action = KEY_BINDINGS[event.code];
+    if (action) held.delete(action);
+  }
+
+  function trackMouse(event) {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    mouse.y = (event.clientY - rect.top) * (canvas.height / rect.height);
+  }
+
+  function mouseDown(event) {
+    trackMouse(event);
+    mouse.down = true;
+    mouse.clicked = true;
+    pressed.add(ACTION_ATTACK);
+    held.add(ACTION_ATTACK);
+  }
+
+  function mouseUp() {
+    mouse.down = false;
+    held.delete(ACTION_ATTACK);
+  }
+
+  window.addEventListener('keydown', keyDown);
+  window.addEventListener('keyup', keyUp);
+  canvas.addEventListener('mousemove', trackMouse);
+  canvas.addEventListener('mousedown', mouseDown);
+  window.addEventListener('mouseup', mouseUp);
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
+    held(action) { return held.has(action); },
+    // Edge-triggered: a press is consumed the first time it is read, so one
+    // tap fires exactly one action even when the frame runs several fixed
+    // simulation steps (an unconsumed press would exit the car and then
+    // re-enter it in the very next sub-step of the same frame).
+    pressed(action) {
+      if (!pressed.has(action)) return false;
+      pressed.delete(action);
+      return true;
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
+    mouse,
+    // Called at the end of every frame: edge-triggered presses live one frame.
+    endFrame() { pressed.clear(); mouse.clicked = false; },
   };
 }
